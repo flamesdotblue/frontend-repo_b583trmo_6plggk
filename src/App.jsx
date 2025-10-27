@@ -1,65 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Header from "./components/Header";
 import Filters from "./components/Filters";
 import ProductGrid from "./components/ProductGrid";
 import CartSheet from "./components/CartSheet";
 
-const initialProducts = [
-  {
-    id: "p1",
-    name: "Apple iPhone 12 (64GB) - Black",
-    brand: "Apple",
-    condition: "Refurbished",
-    price: 35999,
-    mrp: 49999,
-    image: "https://images.unsplash.com/photo-1611120159972-050e0fbb7ab4?ixid=M3w3OTkxMTl8MHwxfHNlYXJjaHwxfHxBcHBsZSUyMGlQaG9uZSUyMDEyJTIwJTI4NjRHQiUyOSUyMC0lMjBCbGFja3xlbnwwfDB8fHwxNzYxNTg2OTczfDA&ixlib=rb-4.1.0&w=1600&auto=format&fit=crop&q=80",
-  },
-  {
-    id: "p2",
-    name: "Samsung Galaxy S21 FE (128GB) - Graphite",
-    brand: "Samsung",
-    condition: "Used",
-    price: 24999,
-    mrp: 39999,
-    image: "https://images.unsplash.com/photo-1510557880182-3d4d3cba35a5?q=80&w=1200&auto=format&fit=crop",
-  },
-  {
-    id: "p3",
-    name: "OnePlus 11R (256GB) - Sonic Black",
-    brand: "OnePlus",
-    condition: "New",
-    price: 39999,
-    mrp: 42999,
-    image: "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?q=80&w=1200&auto=format&fit=crop",
-  },
-  {
-    id: "p4",
-    name: "Xiaomi Redmi Note 12 Pro (128GB) - Blue",
-    brand: "Xiaomi",
-    condition: "Refurbished",
-    price: 16999,
-    mrp: 21999,
-    image: "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?q=80&w=1200&auto=format&fit=crop",
-  },
-  {
-    id: "p5",
-    name: "Apple iPhone 13 (128GB) - Starlight",
-    brand: "Apple",
-    condition: "Used",
-    price: 44999,
-    mrp: 59999,
-    image: "https://images.unsplash.com/photo-1598327105666-5b89351aff97?q=80&w=1200&auto=format&fit=crop",
-  },
-  {
-    id: "p6",
-    name: "Samsung Galaxy A54 (128GB) - Lime",
-    brand: "Samsung",
-    condition: "New",
-    price: 28999,
-    mrp: 30999,
-    image: "https://images.unsplash.com/photo-1512496015851-a90fb38ba796?q=80&w=1200&auto=format&fit=crop",
-  },
-];
+const API_BASE = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
 
 export default function App() {
   const [selectedCategory, setSelectedCategory] = useState("All");
@@ -70,21 +15,63 @@ export default function App() {
   const [cartOpen, setCartOpen] = useState(false);
   const [cart, setCart] = useState([]);
 
-  const brands = useMemo(() => {
-    const set = new Set(initialProducts.map((p) => p.brand));
-    return Array.from(set).sort();
-  }, []);
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  const filtered = useMemo(() => {
-    return initialProducts.filter((p) => {
-      const inCategory =
-        selectedCategory === "All" || p.condition === selectedCategory;
-      const inBrand = selectedBrand === "All" || p.brand === selectedBrand;
-      const inPrice = p.price <= priceRange;
-      const inQuery = p.name.toLowerCase().includes(query.toLowerCase().trim());
-      return inCategory && inBrand && inPrice && inQuery;
-    });
+  // Build query string for backend
+  const queryString = useMemo(() => {
+    const params = new URLSearchParams();
+    if (selectedCategory !== "All") params.set("condition", selectedCategory);
+    if (selectedBrand !== "All") params.set("brand", selectedBrand);
+    if (priceRange) params.set("max_price", String(priceRange));
+    if (query.trim()) params.set("q", query.trim());
+    return params.toString();
   }, [selectedCategory, selectedBrand, priceRange, query]);
+
+  // Fetch products from backend whenever filters change
+  useEffect(() => {
+    let active = true;
+    async function load() {
+      setLoading(true);
+      setError("");
+      try {
+        const url = `${API_BASE}/api/products${queryString ? `?${queryString}` : ""}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Failed to load products (${res.status})`);
+        const data = await res.json();
+        // Normalize to ensure id exists for UI components
+        const normalized = Array.isArray(data)
+          ? data.map((p) => ({
+              id: p.id || p._id || p._id?.$oid || crypto.randomUUID(),
+              name: p.name,
+              brand: p.brand,
+              condition: p.condition,
+              price: Number(p.price || 0),
+              mrp: p.mrp ? Number(p.mrp) : undefined,
+              image: p.image || p.images?.[0] || "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=1200&auto=format&fit=crop",
+            }))
+          : [];
+        if (active) setProducts(normalized);
+      } catch (e) {
+        console.error(e);
+        if (active) setError(e.message || "Something went wrong");
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+    load();
+    return () => {
+      active = false;
+    };
+  }, [queryString]);
+
+  const brands = useMemo(() => {
+    const set = new Set(products.map((p) => p.brand).filter(Boolean));
+    return ["All", ...Array.from(set).sort()].filter(
+      (v, i, arr) => (v === "All" ? i === 0 : true)
+    );
+  }, [products]);
 
   function addToCart(product) {
     setCart((prev) => {
@@ -131,12 +118,22 @@ export default function App() {
           setSelectedBrand={setSelectedBrand}
           priceRange={priceRange}
           setPriceRange={setPriceRange}
-          brands={brands}
+          brands={brands.slice(1)}
           query={query}
           setQuery={setQuery}
         />
 
-        <ProductGrid products={filtered} onAddToCart={addToCart} />
+        {error && (
+          <div className="mx-auto max-w-6xl px-4">
+            <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="mx-auto max-w-6xl px-4 py-10 text-center text-gray-500">Loading products…</div>
+        ) : (
+          <ProductGrid products={products} onAddToCart={addToCart} />
+        )}
       </main>
 
       <CartSheet
